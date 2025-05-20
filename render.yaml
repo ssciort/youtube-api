@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: youtube-flask-app
+    name: youtube-mp3-downloader
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    buildCommand: ""
+    startCommand: "python app.py"
     envVars:
-      - key: PORT
-        value: 10000
+      - key: PYTHON_VERSION
+        value: 3.11
