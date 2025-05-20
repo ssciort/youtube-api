@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 from googleapiclient.discovery import build
 import yt_dlp
 from b2sdk.v2 import InMemoryAccountInfo, B2Api
-from b2sdk.transfer.outbound.upload_source import UploadSourceLocalFile
 
 # --- CONFIGURAZIONE ---
 API_KEY = "AIzaSyB82mzvzHPClgLi8R6rX60pXy9RnNqhb0k"
@@ -19,7 +18,7 @@ if not os.path.exists(DOWNLOAD_FOLDER):
 
 app = Flask(__name__)
 
-# Backblaze init
+# Inizializzazione Backblaze B2
 info = InMemoryAccountInfo()
 b2_api = B2Api(info)
 b2_api.authorize_account("production", B2_KEY_ID, B2_APP_KEY)
@@ -27,27 +26,29 @@ bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
 
 def search_youtube(query, max_results=10):
     youtube = build("youtube", "v3", developerKey=API_KEY)
-    request = youtube.search().list(part="snippet", q=query, type="video", maxResults=max_results)
-    response = request.execute()
-    return [{"title": item["snippet"]["title"], "video_id": item["id"]["videoId"]} for item in response["items"]]
+    req = youtube.search().list(part="snippet", q=query, type="video", maxResults=max_results)
+    res = req.execute()
+    return [{"title": item["snippet"]["title"], "video_id": item["id"]["videoId"]} for item in res["items"]]
 
 def download_audio(video_id, title):
-    safe_title = "".join(c if c.isalnum() else "_" for c in title)
-    base_output_path = os.path.join(DOWNLOAD_FOLDER, safe_title)
-    mp3_path = f"{base_output_path}.mp3"
-    filename_in_b2 = safe_title + ".mp3"
+    safe_title = "".join(c if c.isalnum() else "_" for c in title)[:80]
+    base_path = os.path.join(DOWNLOAD_FOLDER, safe_title)
+    mp3_path = f"{base_path}.mp3"
+    remote_name = f"{safe_title}.mp3"
+    remote_url = f"https://{B2_BUCKET_NAME}.{B2_ENDPOINT}/file/{remote_name}"
 
-    # Se già caricato su B2
+    # Controllo se già presente su B2
     try:
-        file_info = bucket.get_file_info_by_name(filename_in_b2)
-        return f"https://{B2_BUCKET_NAME}.{B2_ENDPOINT}/file/{filename_in_b2}"
-    except:
-        pass
+        bucket.get_file_info_by_name(remote_name)
+        print(f"[INFO] File già esistente su B2: {remote_name}")
+        return remote_url
+    except Exception:
+        pass  # Non trovato, procedo con download
 
-    # Download da YouTube
+    # Download audio da YouTube
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': base_output_path + '.%(ext)s',
+        'outtmpl': base_path + '.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -61,20 +62,23 @@ def download_audio(video_id, title):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
     except Exception as e:
-        print(f"Errore nel download: {e}")
+        print(f"[ERRORE] Download fallito: {e}")
         return None
 
-    # Verifica file creato
     if not os.path.exists(mp3_path):
+        print("[ERRORE] File MP3 non trovato dopo il download.")
         return None
 
     # Upload su B2
     try:
-        bucket.upload(UploadSourceLocalFile(mp3_path), filename_in_b2)
-        print(f"Caricato su B2: {filename_in_b2}")
-        return f"https://{B2_BUCKET_NAME}.{B2_ENDPOINT}/file/{filename_in_b2}"
+        bucket.upload_local_file(
+            local_file=mp3_path,
+            file_name=remote_name
+        )
+        print(f"[SUCCESSO] Caricato su B2: {remote_name}")
+        return remote_url
     except Exception as e:
-        print(f"Errore upload su B2: {e}")
+        print(f"[ERRORE] Upload su B2 fallito: {e}")
         return None
 
 @app.route("/search")
@@ -85,15 +89,16 @@ def search_and_download():
 
     videos = search_youtube(query)
     for video in videos:
-        file_url = download_audio(video["video_id"], video["title"])
-        if file_url:
-            return jsonify({"title": video["title"], "url": file_url})
+        url = download_audio(video["video_id"], video["title"])
+        if url:
+            return jsonify({"title": video["title"], "url": url})
 
-    return jsonify({"error": "Nessun video scaricato"}), 500
+    return jsonify({"error": "Nessun MP3 disponibile"}), 500
 
 @app.route("/")
 def home():
-    full_url = request.url_root.rstrip("/") + "/search?q=argomento"
-    return f"Benvenuto! Usa <a href='{full_url}'>{full_url}</a> per scaricare l'MP3 da YouTube."
+    test_url = request.url_root.rstrip("/") + "/search?q=argomento"
+    return f"Benvenuto! Usa <a href='{test_url}'>{test_url}</a> per scaricare l'MP3 da YouTube."
 
-app.run(host="0.0.0.0", port=3000)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
