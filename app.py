@@ -56,6 +56,7 @@ def download_audio(video_id, title):
         }],
         'quiet': True,
         'noplaylist': True,
+        'cookies': 'cookies.txt',
     }
 
     try:
