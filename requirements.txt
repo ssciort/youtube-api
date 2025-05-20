@@ -2,3 +2,4 @@ Flask
 yt_dlp
 google-api-python-client
 b2sdk
+gunicorn
