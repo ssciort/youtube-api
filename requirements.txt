@@ -1,5 +1,5 @@
 Flask
 yt_dlp
 google-api-python-client
-b2sdk
 gunicorn
+b2sdk==1.27.0
