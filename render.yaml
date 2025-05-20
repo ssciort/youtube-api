@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: youtube-flask-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 10000
